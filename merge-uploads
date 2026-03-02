@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+#
+# merge-uploads.sh — rozpakowuje pliki backup_*-uploads*.zip,
+# łączy zawartość katalogów uploads w jeden katalog uploads i sprząta.
+#
+# Użycie: uruchom w katalogu z plikami backup_*-uploads*.zip
+#   ./merge-uploads.sh
+# lub:
+#   bash merge-uploads.sh /ścieżka/do/katalogu
+#
+
+set -e
+
+# Katalog roboczy: argument lub katalog skryptu
+if [[ -n "${1:-}" ]]; then
+  WORKDIR="$(cd -- "$1" && pwd)"
+else
+  WORKDIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+cd "$WORKDIR"
+
+# Opróżnienie katalogu uploads, jeśli istnieje
+if [[ -d uploads ]]; then
+  echo "[merge-uploads] Opróżniam katalog uploads..."
+  find uploads -mindepth 1 -delete
+else
+  echo "[merge-uploads] Tworzę katalog uploads..."
+  mkdir -p uploads
+fi
+
+# Wzorzec: backup_{1}-uploads{2}.zip (np. backup_2026-03-02-xxx-uploads.zip, ...-uploads2.zip)
+shopt -s nullglob
+zips=( backup_*-uploads*.zip )
+shopt -u nullglob
+
+if [[ ${#zips[@]} -eq 0 ]]; then
+  echo "[merge-uploads] Nie znaleziono plików backup_*-uploads*.zip w: $WORKDIR"
+  exit 0
+fi
+
+echo "[merge-uploads] Znaleziono ${#zips[@]} archiwów do scalenia."
+
+for zip in "${zips[@]}"; do
+  [[ -f "$zip" ]] || continue
+  echo "[merge-uploads] Przetwarzam: $zip"
+  tmp="$(mktemp -d --tmpdir="$(pwd)" "merge-uploads.XXXXXXXXXX")"
+  trap "rm -rf '$tmp'" EXIT
+
+  if ! unzip -q -o "$zip" -d "$tmp"; then
+    echo "[merge-uploads] Błąd rozpakowywania: $zip" >&2
+    rm -rf "$tmp"
+    exit 1
+  fi
+
+  if [[ -d "$tmp/uploads" ]]; then
+    cp -a "$tmp/uploads"/. uploads/
+  else
+    # Szukamy katalogu uploads w rozpakowanym drzewie (np. gdy zip ma inny root)
+    found=
+    while IFS= read -r -d '' dir; do
+      if [[ -d "$dir" ]]; then
+        cp -a "$dir"/. uploads/
+        found=1
+        break
+      fi
+    done < <(find "$tmp" -type d -name uploads -print0 2>/dev/null)
+    if [[ -z "$found" ]]; then
+      echo "[merge-uploads] Ostrzeżenie: w archiwum $zip nie znaleziono katalogu uploads." >&2
+    fi
+  fi
+
+  rm -rf "$tmp"
+  trap - EXIT
+  rm -f "$zip"
+  echo "[merge-uploads] Scalono i usunięto: $zip"
+done
+
+echo "[merge-uploads] Gotowe. Zawartość w: $WORKDIR/uploads"
