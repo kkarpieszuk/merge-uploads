@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# merge-uploads.sh — rozpakowuje pliki backup_*-uploads*.zip,
-# łączy zawartość katalogów uploads w jeden katalog uploads i sprząta.
+# merge-uploads.sh — rozpakowuje pliki backup_*-uploads*.zip do uploads-tmp,
+# synchronizuje uploads-tmp → uploads i sprząta (usuwa uploads-tmp i archiwa).
 #
 # Użycie: wywołaj z katalogu z plikami backup_*-uploads*.zip (skrypt działa w cwd):
 #   ./merge-uploads.sh
@@ -20,14 +20,17 @@ fi
 
 cd "$WORKDIR"
 
-# Opróżnienie katalogu uploads, jeśli istnieje
-if [[ -d uploads ]]; then
-  echo "[merge-uploads] Opróżniam katalog uploads..."
-  find uploads -mindepth 1 -delete
+# Katalog tymczasowy na scaloną zawartość (czyszczony na start)
+UPLOADS_TMP="$WORKDIR/uploads-tmp"
+if [[ -d "$UPLOADS_TMP" ]]; then
+  echo "[merge-uploads] Czyszczę uploads-tmp..."
+  find "$UPLOADS_TMP" -mindepth 1 -delete
 else
-  echo "[merge-uploads] Tworzę katalog uploads..."
-  mkdir -p uploads
+  mkdir -p "$UPLOADS_TMP"
 fi
+
+# uploads — docelowy katalog (nie opróżniamy na początku)
+mkdir -p uploads
 
 # Wzorzec: backup_{1}-uploads{2}.zip (np. backup_2026-03-02-xxx-uploads.zip, ...-uploads2.zip)
 shopt -s nullglob
@@ -54,13 +57,13 @@ for zip in "${zips[@]}"; do
   fi
 
   if [[ -d "$tmp/uploads" ]]; then
-    cp -a "$tmp/uploads"/. uploads/
+    cp -a "$tmp/uploads"/. "$UPLOADS_TMP/"
   else
     # Szukamy katalogu uploads w rozpakowanym drzewie (np. gdy zip ma inny root)
     found=
     while IFS= read -r -d '' dir; do
       if [[ -d "$dir" ]]; then
-        cp -a "$dir"/. uploads/
+        cp -a "$dir"/. "$UPLOADS_TMP/"
         found=1
         break
       fi
@@ -75,5 +78,18 @@ for zip in "${zips[@]}"; do
   rm -f "$zip"
   echo "[merge-uploads] Scalono i usunięto: $zip"
 done
+
+# Synchronizacja uploads-tmp → uploads (uploads ma aktualną zawartość uploads-tmp)
+echo "[merge-uploads] Synchronizuję uploads-tmp → uploads..."
+if command -v rsync &>/dev/null; then
+  rsync -a --delete "$UPLOADS_TMP"/ uploads/
+else
+  find uploads -mindepth 1 -delete
+  cp -a "$UPLOADS_TMP"/. uploads/
+fi
+
+# Usunięcie katalogu tymczasowego
+rm -rf "$UPLOADS_TMP"
+echo "[merge-uploads] Usunięto uploads-tmp."
 
 echo "[merge-uploads] Gotowe. Zawartość w: $WORKDIR/uploads"
