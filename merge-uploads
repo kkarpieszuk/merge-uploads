@@ -3,19 +3,19 @@
 # merge-uploads.sh — rozpakowuje pliki backup_*-uploads*.zip,
 # łączy zawartość katalogów uploads w jeden katalog uploads i sprząta.
 #
-# Użycie: uruchom w katalogu z plikami backup_*-uploads*.zip
+# Użycie: wywołaj z katalogu z plikami backup_*-uploads*.zip (skrypt działa w cwd):
 #   ./merge-uploads.sh
-# lub:
+# lub podaj ścieżkę jawnie:
 #   bash merge-uploads.sh /ścieżka/do/katalogu
 #
 
 set -e
 
-# Katalog roboczy: argument lub katalog skryptu
+# Katalog roboczy: argument lub katalog, z którego skrypt został wywołany
 if [[ -n "${1:-}" ]]; then
   WORKDIR="$(cd -- "$1" && pwd)"
 else
-  WORKDIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  WORKDIR="$(pwd)"
 fi
 
 cd "$WORKDIR"
