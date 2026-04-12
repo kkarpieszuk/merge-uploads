@@ -1,15 +1,64 @@
 #!/usr/bin/env bash
 #
-# merge-uploads.sh — rozpakowuje pliki backup_*-uploads*.zip do uploads-tmp,
-# synchronizuje uploads-tmp → uploads i sprząta (usuwa uploads-tmp i archiwa).
+# merge-uploads.sh — opcjonalnie rozpakowuje archiwa *-mu-plugins.zip, *-plugins.zip,
+# *-themes.zip, *-others.zip do katalogów mu-plugins/, plugins/, themes/, others/,
+# potem scala backup_*-uploads*.zip
+# w uploads-tmp, synchronizuje uploads-tmp → uploads i sprząta.
 #
-# Użycie: wywołaj z katalogu z plikami backup_*-uploads*.zip (skrypt działa w cwd):
+# Użycie: wywołaj z katalogu z plikami backupów (skrypt działa w cwd):
 #   ./merge-uploads.sh
 # lub podaj ścieżkę jawnie:
 #   bash merge-uploads.sh /ścieżka/do/katalogu
 #
 
 set -e
+
+# Zwraca nazwę katalogu docelowego (mu-plugins | plugins | themes | others) wg nazwy pliku .zip
+wp_part_for_zip() {
+  local f="$1"
+  if [[ "$f" == *-mu-plugins.zip ]]; then echo mu-plugins
+  elif [[ "$f" == *-plugins.zip ]]; then echo plugins
+  elif [[ "$f" == *-themes.zip ]]; then echo themes
+  elif [[ "$f" == *-others.zip ]]; then echo others
+  fi
+}
+
+# Rozpakowuje jedno archiwum do WORKDIR/<part>/ (bez scalania; nadpisuje pliki).
+extract_zip_to_named_dir() {
+  local zip=$1
+  local part=$2
+  local dest="$WORKDIR/$part"
+  local tmp
+  tmp="$(mktemp -d --tmpdir="$WORKDIR" "merge-uploads-ex.XXXXXXXXXX")"
+
+  if ! unzip -q -o "$zip" -d "$tmp"; then
+    echo "[merge-uploads] Błąd rozpakowywania: $zip" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  mkdir -p "$dest"
+
+  if [[ -d "$tmp/wp-content/$part" ]]; then
+    cp -a "$tmp/wp-content/$part"/. "$dest/"
+  elif [[ -d "$tmp/$part" ]]; then
+    cp -a "$tmp/$part"/. "$dest/"
+  else
+    local found=
+    while IFS= read -r -d '' dir; do
+      if [[ -d "$dir" ]]; then
+        cp -a "$dir"/. "$dest/"
+        found=1
+        break
+      fi
+    done < <(find "$tmp" -type d -name "$part" -print0 2>/dev/null)
+    if [[ -z "$found" ]]; then
+      echo "[merge-uploads] Ostrzeżenie: w $zip nie znaleziono katalogu $part (ani wp-content/$part w archiwum)." >&2
+    fi
+  fi
+
+  rm -rf "$tmp"
+}
 
 # Katalog roboczy: argument lub katalog, z którego skrypt został wywołany
 if [[ -n "${1:-}" ]]; then
@@ -19,6 +68,32 @@ else
 fi
 
 cd "$WORKDIR"
+
+# --- Opcjonalne archiwa mu-plugins/plugins/themes/others (pytanie przed pracą nad uploads) ---
+shopt -s nullglob
+extra_zips=( *-mu-plugins.zip *-plugins.zip *-themes.zip *-others.zip )
+shopt -u nullglob
+
+if [[ ${#extra_zips[@]} -gt 0 ]]; then
+  echo "[merge-uploads] Wykryto dodatkowe archiwa:"
+  printf '  %s\n' "${extra_zips[@]}"
+  echo -n "Rozpakować je do katalogów mu-plugins/, plugins/, themes/, others/? [Y/n] "
+  read -r reply || true
+  reply="${reply,,}"
+  if [[ -z "$reply" || "$reply" == y || "$reply" == yes ]]; then
+    for zip in "${extra_zips[@]}"; do
+      [[ -f "$zip" ]] || continue
+      part="$(wp_part_for_zip "$zip")"
+      [[ -n "$part" ]] || continue
+      echo "[merge-uploads] Rozpakowuję: $zip → $part/"
+      extract_zip_to_named_dir "$zip" "$part"
+      rm -f "$zip"
+      echo "[merge-uploads] Usunięto: $zip"
+    done
+  else
+    echo "[merge-uploads] Pomijam dodatkowe archiwa."
+  fi
+fi
 
 # Katalog tymczasowy na scaloną zawartość (czyszczony na start)
 UPLOADS_TMP="$WORKDIR/uploads-tmp"
