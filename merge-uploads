@@ -3,7 +3,7 @@
 # merge-uploads.sh — opcjonalnie rozpakowuje archiwa *-mu-plugins.zip, *-plugins.zip,
 # *-themes.zip oraz *-others.zip / *-others2.zip / … (zawartość wp-content) do katalogu
 # roboczego: mu-plugins/, plugins/, themes/ albo bezpośrednio (others), potem scala backup_*-uploads*.zip
-# w uploads-tmp, synchronizuje uploads-tmp → uploads i sprząta.
+# w uploads (albo uploads-tmp + rsync, gdy uploads już ma pliki).
 #
 # Użycie: wywołaj z katalogu z plikami backupów (skrypt działa w cwd):
 #   ./merge-uploads.sh
@@ -139,17 +139,27 @@ if [[ ${#extra_zips[@]} -gt 0 ]]; then
   fi
 fi
 
-# Katalog tymczasowy na scaloną zawartość (czyszczony na start)
-UPLOADS_TMP="$WORKDIR/uploads-tmp"
-if [[ -d "$UPLOADS_TMP" ]]; then
-  echo "[merge-uploads] Czyszczę uploads-tmp..."
-  find "$UPLOADS_TMP" -mindepth 1 -delete
-else
-  mkdir -p "$UPLOADS_TMP"
+# Gdy uploads już ma pliki — scalamy do uploads-tmp i na końcu rsync (bezpieczne scalanie).
+# Gdy uploads nie istnieje lub jest pusty — scalamy od razu do uploads (bez drugiego kopiowania).
+UPLOADS_HAS_CONTENT=
+if [[ -d uploads ]] && [[ -n "$(find uploads -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+  UPLOADS_HAS_CONTENT=1
 fi
 
-# uploads — docelowy katalog (nie opróżniamy na początku)
-mkdir -p uploads
+if [[ -n "$UPLOADS_HAS_CONTENT" ]]; then
+  MERGE_TARGET="$WORKDIR/uploads-tmp"
+  if [[ -d "$MERGE_TARGET" ]]; then
+    echo "[merge-uploads] Czyszczę uploads-tmp..."
+    find "$MERGE_TARGET" -mindepth 1 -delete
+  else
+    mkdir -p "$MERGE_TARGET"
+  fi
+  mkdir -p uploads
+else
+  MERGE_TARGET="$WORKDIR/uploads"
+  mkdir -p "$MERGE_TARGET"
+  echo "[merge-uploads] uploads pusty — scalam bezpośrednio (bez uploads-tmp i bez końcowego kopiowania)."
+fi
 
 # Wzorzec: backup_{1}-uploads{2}.zip (np. backup_2026-03-02-xxx-uploads.zip, ...-uploads2.zip)
 shopt -s nullglob
@@ -176,13 +186,13 @@ for zip in "${zips[@]}"; do
   fi
 
   if [[ -d "$tmp/uploads" ]]; then
-    cp -a "$tmp/uploads"/. "$UPLOADS_TMP/"
+    cp -a "$tmp/uploads"/. "$MERGE_TARGET/"
   else
     # Szukamy katalogu uploads w rozpakowanym drzewie (np. gdy zip ma inny root)
     found=
     while IFS= read -r -d '' dir; do
       if [[ -d "$dir" ]]; then
-        cp -a "$dir"/. "$UPLOADS_TMP/"
+        cp -a "$dir"/. "$MERGE_TARGET/"
         found=1
         break
       fi
@@ -198,17 +208,16 @@ for zip in "${zips[@]}"; do
   echo "[merge-uploads] Scalono i usunięto: $zip"
 done
 
-# Synchronizacja uploads-tmp → uploads (uploads ma aktualną zawartość uploads-tmp)
-echo "[merge-uploads] Synchronizuję uploads-tmp → uploads..."
-if command -v rsync &>/dev/null; then
-  rsync -a --delete "$UPLOADS_TMP"/ uploads/
-else
-  find uploads -mindepth 1 -delete
-  cp -a "$UPLOADS_TMP"/. uploads/
+if [[ -n "$UPLOADS_HAS_CONTENT" ]]; then
+  echo "[merge-uploads] Synchronizuję uploads-tmp → uploads..."
+  if command -v rsync &>/dev/null; then
+    rsync -a --delete "$MERGE_TARGET"/ uploads/
+  else
+    find uploads -mindepth 1 -delete
+    cp -a "$MERGE_TARGET"/. uploads/
+  fi
+  rm -rf "$MERGE_TARGET"
+  echo "[merge-uploads] Usunięto uploads-tmp."
 fi
-
-# Usunięcie katalogu tymczasowego
-rm -rf "$UPLOADS_TMP"
-echo "[merge-uploads] Usunięto uploads-tmp."
 
 echo "[merge-uploads] Gotowe. Zawartość w: $WORKDIR/uploads"
